@@ -1,0 +1,298 @@
+
+
+          JSON 独立语言 只有字符串
+
+      格式  分隔符:  引号 , 逗号 , 冒号
+
+
+     层级结构 值中存在值
+     { "诗人":
+         [{ "李白":"性别" , "爱好" }
+          { "杜甫":"性别" , "爱好" }
+          ]
+       }
+
+
+         YAML 
+      注意缩进 不能用TAB
+      同一层级缩进必须对齐
+      数组用"- " 表示   减号+空格
+      键值对用":" 表示
+
+  大锤老公: {姓名: 本本}
+  大锤老公:
+    姓名: 本本}
+      本本}
+
+
+数组
+     讲师: [本本,开子,丁丁,静静,xx]
+
+      讲师:
+         - 本本
+         - 开子
+         - 丁丁
+         - 静静
+         - xx
+
+  "- " 表示 一个数组中的元素
+    平级对齐
+
+----------
+
+      讲师:             减号前 两个空格缩进
+      ||- 名字: 本本
+          性别: 男          "- " 表示一组
+          爱好: 唐头
+         
+        - 名字: 开子
+          性别: 男
+          爱好: 窑
+
+        - 名字: 丁丁
+          性别: 男
+          爱好: 签名
+     
+       
+-----------------------
+
+
+      jinja2模板   解析引擎
+
+          
+    控制语句   {%  if xxx  %}
+    解释注释   {#  xxxx    #}          
+
+
+
+     {% if xxx  %}
+       xxx   输出
+     {% elif xxx %}
+       yyyy 
+     {% else   %}
+       gggg
+     {% endif %}
+
+
+     {% for i in xxx %}
+       {{do xxx}}
+     {%endfor%}
+
+
+       管道 "|" 可用
+
+
+
+
+
+  hosts: all            指定主机
+    - web
+    - db
+    - other  
+  remote_user: root     用那个用户远程主机
+  tasks: [命令1,命令2,命令3]
+
+
+
+---                   起始文件格式
+- name: test ping     程序定义一个程序名
+  hosts: all          指定主机地址 可以是数组
+  remote_user: root   用远程用户主机(可以不要)
+  tasks:              命令组 下方为命令集合
+    - ping:           每条命令前都可以加name 注释
+
+注意层级结构 每层是两个空格间隔
+ansible all -m ping
+
+启用playbook
+ ansible-playbook ping.yml -f 5
+
+遇到解决不了的情况  查看案例
+ansible-doc user  >>> 翻到 案例 EXAMPLE
+
+
+--------------------脚本文件 运行流程
+  安装  yum 
+  修改配置文件   lineinfile(插件)
+   默认主页   本地copy
+   其服务  service
+   vars:     可定义变量
+      username:      变量名称为username 值自定义
+   name: "{{ username }}"     应用变量
+
+---
+- name: Apache buile
+  hosts: web
+  tasks:
+    - name: install the latest version of Apache
+      yum:
+        name: httpd
+        state: latest
+    - name: change Listen 80 to 8080
+      lineinfile:
+        path: /etc/httpd/conf/httpd.conf
+        regexp: '^Listen'
+        insertafter: '^#Listen '
+        line: 'Listen 8080'
+    - name: change index.html
+      copy:
+        src: /root/index.html       #已修改的文件
+        dest: /var/www/html/
+        owner: apache
+        group: apache
+        mode: 0644                  #文件权限
+    - name: start httpd
+      service:
+        name: httpd
+        state: started
+    - name: restart httpd
+      service:
+        name: httpd
+        state: restarted            两条可以一起
+        enabled: yes
+
+]# ansible-playbook 文件   使用 playbook 文件
+-----------------------------------------------
+                     vim
+               
+ctrl + v   选则  d 删除
+ctrl +i  shitf+
+
+g+f 去 ctrl+ o  回    跳转光标行中的文件位置
+
+
+/bin/tar  shift + k
+
+
+-------------------------------
+vim  useradd.yml
+---
+- name: add user
+  hosts: web
+  vars:
+    username: lisi               #定义变量username
+  tasks:
+    - name: add user "{{ username }}"
+      user:
+        name: "{{ username }}"
+        group: users
+        password: "{{ 'abc' | password_hash('sha512') }}"
+             管道给密码加密 否则为明文密码 用户不可用
+    - name: set password
+      shell: echo 123|passwd --stdin "{{ username }}"
+
+-------------------
+]# ansible-playbook 文件
+
+------------------------------------------
+
+
+playbook 外部传递变量
+]# ansible-playbook 文件 -e '变量值'
+                         -e @yml文件
+
+
+------------------------------
+ansible 对多命令中错误的处理 一般是从错误开始 之后都不运行
+  方法 ignore_errors: True
+
+---
+- hosts: web
+  tasks:
+    - shell: mkdir /tmp/cache
+      ignore_errors: True  /True 表示继续运行 默认False
+    - service:
+        name: httpd
+        state: restarted
+~                                 
+     当创建文件命令 执行时发现以存在文件 ansible就会报错直接返回
+     默认报错就停止执行
+    
+
+------------------------------------
+
+     ansible-playbook
+    tags: TAG_ID     使用标签 可以指定标签中的命令
+
+
+---
+- hosts: web
+  tasks:
+    - name: modify httpd.conf
+      copy:
+        src: httpd.conf
+        dest: /etc/httpd/conf/httpd.conf
+        owner: root
+        group: root
+        mode: 0644
+      tags: syncconf
+      notify: reload httpd  #此处change 就会指向 下方handlers
+    - copy:
+        src: /root/index.html
+        dest: /var/www/html/index.html
+        owner: root
+        group: root
+        mode: 0644
+      tags: update_index
+  handlers:                #指向的是此处
+    - name: reload httpd
+      service:
+        name: httpd
+        state: restarted
+
+
+
+  出发任务只有在主任务发生change时  才会触发
+  change为运行程序时产生 数据更新时  所报的提示!!!!!!
+
+------------------------------------------
+
+     ansible 中 条件判断   when
+         判断 语句在模块执行最后
+
+     uptime 查看系统 负载 1min 5min 15min
+
+      register: 变量名   >>保存之前值到变量中
+
+      include 引入单个文件
+      roles 
+---
+- hosts: web
+  tasks:
+    - shell: uptime | awk '{printf("%.2f",$(NF-2))}'
+      register: result
+    - name: shutdown service
+      service:
+        name: httpd
+        state: stopped
+      when: result.stdout|float > 0.7
+         条件判断 放在tasks最后 与name平级
+      debug:
+        var=变量      //可以查看变量中的所有参数
+
+
+ awk 'BEGIN{while(1){}}' 死循环
+
+
+
+
+              为不同用户定义不同组
+
+]# vim adduser1.yml
+---
+- hosts: web2
+  remote_user: root
+  tasks:
+    - name: add users
+      user: group={{item.group}} 
+      password={{'123456' | password_hash('sha512')}}    
+      name={{item.name}}
+      with_items:
+        - {name: 'nb',  group: 'root'}
+        - {name: 'dd',  group: 'root'}
+        - {name: 'plj', group: 'wheel'}
+        - {name: 'lx',  group: 'wheel'} 
+
+
+
+
