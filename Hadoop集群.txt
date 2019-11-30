@@ -1,0 +1,298 @@
+
+
+xshell
+lrzsz  上传下载 安装包
+rz / sz
+一台机器跑多个软件 要遵循的原则
+  资源使用不能冲突
+磁盘 内存 cpu
+                            Hadoop集群
+配置 ResourceManager
+
+]# pwd
+/usr/local/hadoop/etc/hadoop
+]# cp mapred-site.xml.template mapred-site.xml   #准备配置文件
+]# vim mapred-site.xml
+
+<configuration>
+      <property>
+           <name>mapreduce.framework.name</name>
+           <value>yarn</value>
+      </property>
+</configuration>
+~                                       
+
+
+
+]# vim yarn-site.xml
+-->
+<configuration>
+      <property>
+           <name>yarn.resourcemanager.hostname</name>
+               ##resourcemanager 地址
+           <value>nn01</value>  #对应上方 hostname
+      </property>
+<!-- Site specific YARN configuration properties -->
+      <property>
+           <name>yarn.nodemanager.aux-services</name>
+                    ##使用哪个计算框架
+           <value>mapreduce_shuffle</value> 
+                    ##计算框架名称  (协商程序员)
+      </property>
+</configuration>
+
+
+                            同步数据
+]# for i in node{1..3};do
+> rsync -aXSH --delete /usr/local/hadoop/etc/hadoop ${i}:/usr/local/hadoop/etc/
+> done
+
+
+
+]# ./sbin/start-all.sh      起服务
+]# jps
+1570 Jps
+1308 ResourceManager
+941 NameNode
+1135 SecondaryNameNode
+
+
+
+
+hdfs 服务
+端口 50070 50090 50075
+yarn 服务
+端口 8088 8042
+
+
+
+
+]# ./bin/hadoop fs -mkdir /adc
+]# ./bin/hadoop fs -ls /     ##  / = hdfs://nn01:/ 
+Found 1 items
+drwxr-xr-x   - root supergroup          0 2019-11-20 10:19 /adc
+
+hadoop中 创建文件
+]# ./bin/hadoop fs -touchz /f1
+
+
+]# ./bin/hadoop fs -put localfile /集群   上传本地文件到集群中
+]# ./bin/hadoop fs -get /集群中文件   集群文件下载到本地当前目录下
+     不指定 都是在当前文件夹下进行
+
+
+
+
+ ./bin/hadoop fs -mkdir /input
+ ./bin/hadoop fs -put *.txt  /input
+ ./bin/hadoop jar share/hadoop/mapreduce/hadoop-mapreduce-examples-2.7.7.jar wordcount /input /output
+  ./bin/hadoop fs -cat /output/*
+
+
+
+
+-------------------------新增HDFS节点------
+启动新的系统 设置ssh免密登陆
+]# ssh-copy-id -i id_rsa.pub 192.168.1.64
+
+在所有节点修改 /etc/hosts 增加新节点主机信息
+]# echo "192.168.1.64 newnode" >> /etc/hosts
+]# for i in { node1 node2 node3 newnode };do
+> scp /etc/hosts $i:/etc/
+> done
+
+安装java运行环境 (java-1.8.0-openjdk-devel)
+
+修改NameNode的slaves文件增加新节点
+]# vim /usr/local/hadoop/etc/hadoop/slaves
+
+拷贝/usr/local/hadoop 到新节点上
+]# scp -r /usr/local/hadoop  newnode:/usr/local/
+
+在新节点上启动DataNode
+]# ./sbin/hadoop-daemon.sh start datanode
+
+设置同步带宽 ,同步数据  
+]#  ./sbin/hadoop-daemon.sh start datanode
+]# ./bin/hdfs dfsadmin -setBalancerBandwidth 500000000
+]# ./sbin/start-balancer.sh
+
+查看状态
+]# ./bin/hdfs dfsadmin -report
+
+-------------------------------------------
+单独起角色
+   hadoop-daemod.sh start +角色名 /DataNode/T
+  
+
+
+
+   删除 HDFS角色   在调度主机NameNode 上执行
+
+1 nn01配置文件添加一行
+]# vim /usr/local/hadoop/etc/hadoop/hdfs-site.xml
+      <property>
+           <name>dfs.hosts.exclued</name>
+           <value>/usr/local/hadoop/etc/hadoop/exclude</value>
+      </property>
+
+
+
+]# vim /usr/local/hadoop/etc/hadoop/exclude
+newnode         # 该文件 没有新建   写入要删除的节点主机名
+
+
+
+]# ./bin/hdfs dfsadmin -refreshNodes
+   #更新数据 
+
+]# ./bin/hdfs dfsadmin -report
+    #查看状态
+-Normal 正常
+-Decommissioned in Program 数据正在迁移
+-Decommissioned 数据迁移完成
+
+
+
+--------------------------------------
+
+   NFS网关 
+      提供 nfs服务+hdfs客户端服务
+       由hdfs客户端程序作中介 以访问后端的hdfs集群服务器
+    在将数据通过 hdfs客户端 返还给使用者
+
+  hdfs集群   -----   nfsgw  --------  使用者
+datenode{1..3}     hdfs client           <--  输入命令
+                   nfs server
+                     
+                    识别输入的命令
+               将命令转化为hdfs的操作命令
+                 传送给 hdfs集群
+
+                   写入时 先在nfsgw处建立缓存数据
+                    当数据完全完成时 在自动发送给
+                    hdfs集群  nfsgw本身不储存数据
+
+
+
+./bin/hadoop fs -ls /  <---  ./bin/hadoop fs -ls / | ls /  <--- ls /
+
+
+
+
+--------
+            需要 uid gid 相同的用户 并且同时存在于hdfs集群和nfsgw中
+         在NameNode和nfsgw上添加代理用户
+]# groupadd -g 800 nfsuser
+]# useradd -u 800 -g 800 -r -d /var/hadoop nfsuser
+                            -d   新账户的主目录
+
+  NameNode配置core-site.xml  授权用户访问
+
+ 1 停止集群  
+]# ./sbin/stop-all.sh 
+
+ 2 修改配置文件
+
+<configuration>
+      <property>
+           <name>fs.defaultFS</name>
+           <value>hdfs://nn01:9000</value>
+      </property>
+      <property>
+           <name>hadoop.tmp.dir</name>
+           <value>/var/hadoop</value>
+      </property>
+      <property>
+           <name>hadoop.proxyuser.nfsuser.groups</name>   
+           <value>*</value>       {代理用户}
+      </property>
+      <property>
+           <name>hadoop.proxyuser.nfsuser.hosts</name>
+           <value>*</value>
+      </property>
+</configuration>
+
+   把配置同步给所有主机
+
+]# for i in node{1..3};do
+> scp /usr/local/hadoop/etc/hadoop/core-site.xml $i:/usr/local/hadoop/etc/hadoop/
+> done
+
+   重起服务
+]# ./sbin/start-all.sh 
+]# ./bin/hdfs dfsadmin -report
+
+
+起一个新系统  不能有 rpcbind / nfs
+]# rpm -qa |grep rpcbind
+]# rpm -qa |grep nfs
+
+
+配置/etc/hosts 
+192.168.1.65 nfsgw
+192.168.1.60 nn01
+192.168.1.61 node1
+192.168.1.62 node2
+192.168.1.63 node3
+
+
+传输 hadoop文件   
+]# scp /usr/local/hdaoop root@nfsgw:/usr/local/
+
+配置nfsgw主机上的 hdfs-site.xml 文件  就此一台主机配置即可
+          
+]# vim /usr/local/hadoop/etc/hadoop/hdfs-site.xml
+      <property>
+           <name>nfs.exports.allowed.hosts</name>   #nfs挂载设置
+           <value>* rw</value>   #允许所有主机 权限为 rw
+      </property>
+                        添加一行 配置 
+
+
+
+   临时存储无序的写操作  需要确保足够的空间目录
+             nfs.dump.dir
+
+      <property>
+           <name>nfs.dump.dir</name>     #缓存配置
+           <value>/var/nfstmp</value>    #缓存位置
+      </property>
+
+                          在添一行
+
+
+]# mkdir /var/nfstmp
+]# ll -d /var/nfstmp/
+drwxr-xr-x 2 root root 6 11月 20 15:52 /var/nfstmp/
+]# chown 800.800 /var/nfstmp/      #用户和组 前面设置为的800 
+]# ll -d /var/nfstmp/
+drwxr-xr-x 2 nfsuser nfsuser 6 11月 20 15:52 /var/nfstmp/
+
+
+起服务
+          nfsgw上
+
+]# cd /usr/local/hadoop/    清空日志文件 赋予日志文件 特殊权限
+]# rm -rf logs/*            默认权限为root 复制过来的
+]# setfacl -m user:nfsuser:rwx /usr/local/hadoop/logs
+
+]# ./sbin/hadoop-daemon.sh --script ./bin/hdfs start portmap
+
+]# sudo -u nfsuser ./sbin/hadoop-daemon.sh --script ./bin/hdfs start nfs3
+#这里一定要切换 用户启动服务 应为其他文件授权的 用户是nfsuser
+
+
+
+挂载nfs共享的文件
+]# yum -y install nfs-utils.x86_64 
+]# showmount -e 192.168.1.65
+Export list for 192.168.1.65:
+/ *
+
+]# mount -t nfs -o vers=3,proto=tcp,nolock,noatime,sync,noacl 192.168.1.65:/  /mnt/
+
+开机挂载
+vim /etc/fstab
+
+

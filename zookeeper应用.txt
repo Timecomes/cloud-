@@ -1,0 +1,295 @@
+
+
+
+      zookeeper 应用程序间协调服务
+  
+保证数据在集群中的一致性
+
+zookeeper 角色与选举
+
+
+  机器投票选举leader
+   leader死亡,重选leader
+  死亡机器数量达到一半 , 集群挂掉
+  无法得到足够票数,重新发起投票
+ Observer不计算在投票设备数量中
+
+  leader所有写相关操作
+  
+
+
+
+
+
+
+
+
+
+起服务
+需要java环境(java-1.8.0-openjdk-devel)
+
+]# tar -xf zookeeper-3.4.13.tar.gz
+]# mv zookeeper-3.4.13 /usr/local/zookeeper/
+]# cd /usr/local/zookeeper/conf/
+]# mv zoo_sample.cfg zoo.cfg
+]# vim zoo.cfg
+server.1=node1:2888:3888
+server.2=node2:2888:3888
+server.3=node3:2888:3888
+server.4=nn01:2888:3888:observer
+~                                   
+                     每台机器都要做
+]# ssh node1 
+]# for i in node{1..3};do rsync -aSXH --delete /usr/local/zookeeper ${i}:/usr/local/ ; done
+
+]# for i in node{1..3};do ssh $i "mkdir /tmp/zookeeper"; done
+]# mkdir /tmp/zookeeper
+]# echo 4 >/tmp/zookeeper/myid    
+]# cat /tmp/zookeeper/myid 
+4                     #4为之前定义的server号
+
+]# /usr/local/zookeeper/bin/zkServer.sh start
+
+
+]# vim api.sh     # 可查看集群状态
+#!/bin/bash
+function getstatus(){
+    exec 9<>/dev/tcp/$1/2181 2>/dev/null
+    echo stat >&9
+    MODE=$(cat <&9 |grep -Po "(?<=Mode:).*")
+    exec 9<&-
+    echo ${MODE:-NULL}
+}
+for i in node{1..3} nn01;do
+    echo -ne "${i}\t"
+    getstatus ${i}
+done
+
+
+
+
+Kafka集群   读缓存 写队列
+
+消息队列  储存现处理不了的信息 等到处理器有空闲处理时在处理
+           缓存转发消息  异步通信
+
+              
+生产者  ----  超市(物品集中第) ------ 消费者
+               中间缓存区域
+               存储消费者需求
+              合理/分步 请求 生产者 生产
+
+减少大量数据一次性涌入 生产者处 造成生产者 崩溃
+
+
+
+]# tar -xf kafka_2.12-2.1.0.tgz
+]# mv kafka_2.12-2.1.0 /usr/local/kafka
+]# cd /usr/local/kafka/config
+]# vim server.properties
+broker.id=22
+zookeeper.connect=node1:2181,node2:2181,node3:2181
+
+拷贝 kafka 到其他主机，并修改 broker.id ,不能重复
+
+]# for i in 63 64; do rsync -aSH --delete /usr/local/kafka 192.168.1.$i:/usr/local/; done
+]# vim /usr/local/kafka/config/server.properties     
+
+
+启动 kafka 集群（node1，node2，node3启动）
+]# /usr/local/kafka/bin/kafka-server-start.sh -daemon /usr/local/kafka/config/server.properties 
+
+
+
+NameNode 主机作高可用
+  创建新主机 安装java环境 (java-1.8.0-openjdk-devel)
+  所有集群成员 修改 /etc/hosts
+  拷贝nn01 主机上的密钥文件 /root/.ssh/*
+  拷贝 hadoop程序  /usr/local/hadoop
+
+
+
+
+hadoop-env.sh    mapred-site.xml  yarn-site.xml 
+core-site.xml    hdfs-site.xml    slaves
+
+
+]# cat core-site.xml
+<configuration>
+    <property>
+        <name>fs.defaultFS</name>
+        <value>hdfs://nsd1907</value>
+//nsd1907是随便起的名。相当于一个组，访问的时候访问这个组
+    </property>
+    <property>
+        <name>hadoop.tmp.dir</name>
+        <value>/var/hadoop</value>
+    </property>
+    <property>
+        <name>ha.zookeeper.quorum</name>
+        <value>node1:2181,node2:2181,node3:2181</value>
+ //zookeepe的地址
+    </property>
+    <property>
+        <name>hadoop.proxyuser.nfsuser.groups</name>
+        <value>*</value>
+    </property>
+    <property>
+        <name>hadoop.proxyuser.nfsuser.hosts</name>
+        <value>*</value>
+    </property>
+</configuration>
+
+
+]# cat hadoop-env.sh 
+
+export JAVA_HOME="/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.161-2.b14.el7.x86_64/jre"
+
+export HADOOP_CONF_DIR="/usr/local/hadoop/etc/hadoop"
+
+
+]# cat hdfs-site.xml 
+
+<configuration>
+    <property>
+        <name>dfs.nameservices</name>
+        <value>nsd1907</value>
+    </property>
+    <property>
+        <name>dfs.ha.namenodes.nsd1907</name>
+        <value>nn1,nn2</value>
+//nn1,nn2名称固定，是内置的变量，nsd1907里面有nn1，nn2
+    </property>
+    <property>
+        <name>dfs.namenode.rpc-address.nsd1907.nn1</name>
+        <value>nn01:8020</value>
+//声明nn1 8020为通讯端口，是nn01的rpc通讯端口
+    </property>
+    <property>
+        <name>dfs.namenode.rpc-address.nsd1907.nn2</name>
+        <value>nn02:8020</value>
+//声明nn2是谁，nn02的rpc通讯端口
+    </property>
+    <property>
+        <name>dfs.namenode.http-address.nsd1907.nn1</name>
+        <value>nn01:50070</value>
+//nn01的http通讯端口
+    </property>
+    <property>
+        <name>dfs.namenode.http-address.nsd1907.nn2</name>
+        <value>nn02:50070</value>
+    </property>
+    <property>
+        <name>dfs.namenode.shared.edits.dir</name>
+        <value>qjournal://node1:8485;node2:8485;node3:8485/nsd1907</value>
+//指定namenode元数据存储在journalnode中的路径
+    </property>
+    <property>
+        <name>dfs.journalnode.edits.dir</name>
+        <value>/var/hadoop/journal</value>
+//指定journalnode日志文件存储的路径
+    </property>
+    <property>
+        <name>dfs.client.failover.proxy.provider.nsd1907</name>
+       //指定HDFS客户端连接active namenode的java类 <value>org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider</value>
+    </property>
+    <property>
+        <name>dfs.ha.fencing.methods</name>
+ //配置隔离机制为ssh
+        <value>sshfence</value>
+    </property>
+    <property>
+        <name>dfs.ha.fencing.ssh.private-key-files</name>
+        <value>/root/.ssh/id_rsa</value>
+//指定密钥的位置
+    </property>
+    <property>
+        <name>dfs.ha.automatic-failover.enabled</name>
+        <value>true</value>
+//开启自动故障转移
+    </property>
+    <property>
+        <name>dfs.replication</name>
+        <value>2</value>
+    </property>
+    <property>
+        <name>dfs.hosts.exclude</name>
+        <value>/usr/local/hadoop/etc/hadoop/exclude</value>
+    </property>
+</configuration>
+
+
+
+]# cat mapred-site.xml 
+
+<configuration>
+    <property>
+        <name>mapreduce.framework.name</name>
+        <value>yarn</value>
+    </property>
+</configuration>
+
+
+
+]# cat yarn-site.xml 
+
+-->
+<configuration>
+    <property>
+        <name>yarn.resourcemanager.ha.enabled</name>
+        <value>true</value>
+    </property>
+    <property>
+        <name>yarn.resourcemanager.ha.rm-ids</name>
+        <value>rm1,rm2</value>
+//rm1,rm2代表nn01和nn02
+    </property>
+    <property>
+        <name>yarn.resourcemanager.recovery.enabled</name>
+        <value>true</value>
+    </property>
+    <property>
+        <name>yarn.resourcemanager.store.class</name>
+        <value>org.apache.hadoop.yarn.server.resourcemanager.recovery.ZKRMStateStore</value>
+    </property>
+    <property>
+        <name>yarn.resourcemanager.zk-address</name>
+        <value>node1:2181,node2:2181,node3:2181</value>
+    </property>
+    <property>
+        <name>yarn.resourcemanager.cluster-id</name>
+        <value>yarn-ha</value>
+    </property>
+    <property>
+        <name>yarn.resourcemanager.hostname.rm1</name>
+        <value>nn01</value>
+    </property>
+    <property>
+        <name>yarn.resourcemanager.hostname.rm2</name>
+        <value>nn02</value>
+    </property>
+<!-- Site specific YARN configuration properties -->
+    <property>
+        <name>yarn.nodemanager.aux-services</name>
+        <value>mapreduce_shuffle</value>
+    </property>
+</configuration>
+
+
+
+
+nn1]# ./bin/hdfs zkfc -formatZk
+
+nodex]# ./sbin/hadoop-daemon.sh start journalnode 
+
+nn1]# ./bin/hdfs namenode -format
+
+nn2]# rsync -aSH nn01:/var/hadoop/dfs /var/hadoop/
+
+nn1]# ./bin/hdfs namenode -initializeSharedEdits 
+
+nodex]# ./sbin/hadoop-daemon.sh stop journalnode
+
+
+
+
